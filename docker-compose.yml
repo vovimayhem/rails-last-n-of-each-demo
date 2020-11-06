@@ -1,0 +1,36 @@
+version: "3.7"
+
+volumes:
+  gem_bundle:
+  postgres_data:
+
+services:
+  postgres:
+    image: postgres:13-alpine
+    ports:
+      - ${DEMO_PG_PORT:-5432}:5432
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    environment:
+      POSTGRES_PASSWORD: 3x4mpl3P455w0rd
+
+  web:
+    image: vovimayhem/rails-last-n-of-each-demo:development
+    build:
+      context: .
+      target: development
+      args:
+        APP_PATH: ${PWD:-/srv/last-n-of-each-demo}
+        DEVELOPER_UID: ${UID:-1000}
+        DEVELOPER_USERNAME: ${USER:-you}
+    depends_on:
+      - postgres
+    volumes:
+      - .:${PWD:-/srv/last-n-of-each-demo}
+      - gem_bundle:/usr/local/bundle
+    command: rails server -p 3000 -b 0.0.0.0
+    ports:
+      - ${DEMO_WEB_PORT:-3000}:3000
+    entrypoint: ${PWD:-/srv/last-n-of-each-demo}/bin/dev-entrypoint
+    environment: 
+      DATABASE_URL: postgres://postgres:3x4mpl3P455w0rd@postgres:5432/?encoding=unicode

@@ -1,0 +1,123 @@
+#!/usr/bin/env ruby
+
+# frozen_string_literal: true
+
+require 'rubygems'
+require 'rake'
+require 'bundler'
+
+Bundler.setup(:default)
+
+require 'active_record'
+require 'erb'
+require 'yaml'
+
+APP_PATH = File.expand_path('.')
+APP_TEMP_PATH = "#{APP_PATH}/tmp"
+APP_SETUP_LOCK = "#{APP_TEMP_PATH}/setup.lock"
+APP_SETUP_WAIT = ENV.fetch('APP_SETUP_WAIT', '5').to_i
+
+def lock_setup
+  system "mkdir -p #{APP_TEMP_PATH} && touch #{APP_SETUP_LOCK};"
+end
+
+def unlock_setup
+  system "rm -rf #{APP_SETUP_LOCK}"
+end
+
+def wait_setup
+  puts 'Waiting for app setup to finish...'
+  sleep APP_SETUP_WAIT
+end
+
+def on_setup_lock_acquired
+  wait_setup while File.exist?(APP_SETUP_LOCK)
+
+  lock_setup
+  yield
+  unlock_setup
+end
+
+def set_given_or_default_command
+  ARGV.concat %w[rails s -p 3000 -b 0.0.0.0] if ARGV.empty?
+end
+
+def exec_given_or_default_command
+  exec(*ARGV)
+end
+
+def install_missing_gems
+  system 'bundle check || bundle install'
+end
+
+def parse_database_config_file
+  database_yaml = Pathname.new File.expand_path('config/database.yml')
+  loaded_yaml = YAML.load(ERB.new(database_yaml.read).result) || {}
+  shared = loaded_yaml.delete('shared')
+
+  loaded_yaml.each { |_k, values| values.reverse_merge!(shared) } if shared
+  Hash.new(shared).merge(loaded_yaml)
+end
+
+def database_config
+  @database_config ||= parse_database_config_file.fetch ENV.fetch('RAILS_ENV', 'development')
+end
+
+def establish_database_connection
+  ActiveRecord::Base.establish_connection database_config
+  ActiveRecord::Base.connection_pool.with_connection { |connection| }
+end
+
+def database_initialized?
+  ActiveRecord::Base.connection_pool.with_connection do |connection|
+    connection.data_source_exists? :schema_migrations
+  end
+end
+
+def database_ready?
+  connection_tries ||= 3
+
+  establish_database_connection
+  database_initialized?
+
+rescue PG::ConnectionBad
+  unless (connection_tries -= 1).zero?
+    puts "Retrying DB connection #{connection_tries} more times..."
+    sleep APP_SETUP_WAIT
+    retry
+  end
+  false
+
+rescue ActiveRecord::NoDatabaseError
+  false
+end
+
+def setup_database
+  system 'rails db:setup'
+end
+
+def wait_until_database_accepts_connections
+  system 'dockerize -wait tcp://postgres:5432 -timeout 25s'
+end
+
+def remove_rails_pidfile
+  system "rm -rf #{File.expand_path('tmp/pids/server.pid')}"
+end
+
+def rails_server?
+  ARGV[0] == 'rails' && %w[server s].include?(ARGV[1])
+end
+
+def command_requires_setup?
+  %w[rails rspec sidekiq hutch].include?(ARGV[0])
+end
+
+set_given_or_default_command
+
+on_setup_lock_acquired do
+  install_missing_gems
+  setup_database unless database_ready?
+  remove_rails_pidfile if rails_server?
+end if command_requires_setup?
+
+exec_given_or_default_command
