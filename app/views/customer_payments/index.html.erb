@@ -1,0 +1,21 @@
+<h2>Customer Payments</h2>
+
+<ul>
+<% @displayed_customer_payments.group_by(&:customer).each do |customer, payments| %>
+<li>
+  <%= customer.full_name %> (<%= customer.email %>)
+  <table>
+    <thead><tr><th>Payment ID</th><th>Amount</th><th>Timestamp</th></tr></thead>
+    <tbody>
+    <% payments.each do |payment| %>
+      <tr>
+        <td><%= payment.id %></td>
+        <td><%= payment.amount %></td>
+        <td><%= payment.created_at %></td>
+      </tr>
+    <% end %>
+    </tbody>
+  </table>
+</li>
+<% end %>
+</ul>
